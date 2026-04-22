@@ -1,0 +1,63 @@
+name: Oracle ARM Sniper
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+jobs:
+  snipe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350  # ~5h 50m (GitHub max is 6h)
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install OCI SDK
+        run: pip install oci
+
+      - name: Write OCI config file
+        run: |
+          mkdir -p ~/.oci
+          cat > ~/.oci/config << 'OCIEOF'
+          [DEFAULT]
+          user=${{ secrets.OCI_USER_OCID }}
+          fingerprint=${{ secrets.OCI_FINGERPRINT }}
+          tenancy=${{ secrets.OCI_TENANCY_OCID }}
+          region=ap-mumbai-1
+          key_file=~/.oci/oci_api_key.pem
+          OCIEOF
+          # Remove leading spaces from heredoc
+          sed -i 's/^          //' ~/.oci/config
+
+      - name: Write OCI API private key
+        run: |
+          echo "${{ secrets.OCI_API_KEY_PEM }}" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/oci_api_key.pem
+
+      - name: Run Sniper (loops for ~5 hours)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OCI_COMPARTMENT_ID: ${{ secrets.OCI_COMPARTMENT_ID }}
+          OCI_AD_NAME: ${{ secrets.OCI_AD_NAME }}
+          OCI_IMAGE_ID: ${{ secrets.OCI_IMAGE_ID }}
+          OCI_SUBNET_ID: ${{ secrets.OCI_SUBNET_ID }}
+          OCI_SSH_PUB_KEY: ${{ secrets.OCI_SSH_PUB_KEY }}
+        run: |
+          timeout 20400 python Sniper.py || true
+        # timeout = 5h 40m in seconds (340 * 60)
+        # `|| true` so the workflow doesn't fail when timeout kills it
+
+      - name: Upload log artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sniper-log-${{ github.run_id }}
+          path: sniper.log
+          retention-days: 3
