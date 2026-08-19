@@ -7,6 +7,7 @@ jobs:
   snipe:
     runs-on: ubuntu-latest
     permissions:
+      contents: read   # required to check out this private repo
       actions: write   # lets the sniper disable this workflow after a successful launch
     timeout-minutes: 350  # ~5h 50m (GitHub max is 6h)
 
