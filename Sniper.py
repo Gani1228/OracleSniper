@@ -22,6 +22,10 @@ COMPARTMENT_ID = os.environ.get("OCI_COMPARTMENT_ID", "")
 AD_NAME = os.environ.get("OCI_AD_NAME", "")
 IMAGE_ID = os.environ.get("OCI_IMAGE_ID", "")
 SUBNET_ID = os.environ.get("OCI_SUBNET_ID", "")
+# Optional: launch from an existing boot volume instead of a fresh image, which
+# restores the old instance's disk (data, packages, SSH keys) as-is. Takes
+# precedence over IMAGE_ID when set. Must live in the same AD as AD_NAME.
+BOOT_VOLUME_ID = os.environ.get("OCI_BOOT_VOLUME_ID", "")
 SSH_PUB_KEY = os.environ.get("OCI_SSH_PUB_KEY", "")
 
 # --- SHAPE CONFIGS TO TRY (from largest to smallest) ---
@@ -105,12 +109,21 @@ def try_launch(shape_config, consecutive_rate_limits):
             memory_in_gbs=shape_config["memory_in_gbs"],
         )
 
+        if BOOT_VOLUME_ID:
+            source_specs = oci.core.models.InstanceSourceViaBootVolumeDetails(
+                boot_volume_id=BOOT_VOLUME_ID,
+            )
+        else:
+            source_specs = oci.core.models.InstanceSourceViaImageDetails(
+                image_id=IMAGE_ID,
+            )
+
         request = oci.core.models.LaunchInstanceDetails(
             compartment_id=COMPARTMENT_ID,
             availability_domain=AD_NAME,
             shape="VM.Standard.A1.Flex",
             shape_config=shape_specs,
-            image_id=IMAGE_ID,
+            source_details=source_specs,
             create_vnic_details=vnic_specs,
             display_name="AI_Brain_12GB",
             metadata={"ssh_authorized_keys": SSH_PUB_KEY},
@@ -180,7 +193,7 @@ def try_launch(shape_config, consecutive_rate_limits):
             return False, retry_after, consecutive_rate_limits
 
         elif e.status == 404:
-            log.error("404 Error - resource not found. Check IMAGE_ID, SUBNET_ID, COMPARTMENT_ID, AD_NAME.")
+            log.error("404 Error - resource not found. Check BOOT_VOLUME_ID/IMAGE_ID, SUBNET_ID, COMPARTMENT_ID, AD_NAME.")
             log.error("Details: %s", e.message)
             return True, None, consecutive_rate_limits
 
@@ -206,6 +219,10 @@ def run_sniper():
 
     log.info("Oracle ARM Instance Sniper started")
     log.info("Target: VM.Standard.A1.Flex in %s", AD_NAME)
+    if BOOT_VOLUME_ID:
+        log.info("Source: existing boot volume %s", BOOT_VOLUME_ID)
+    else:
+        log.info("Source: image %s", IMAGE_ID)
     log.info("Retry interval: %d-%ds | Smaller shape fallback: %s",
              CAPACITY_RETRY_MIN_SECONDS, CAPACITY_RETRY_MAX_SECONDS,
              "ON" if TRY_SMALLER_SHAPES else "OFF")
