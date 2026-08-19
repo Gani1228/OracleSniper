@@ -65,6 +65,7 @@ log = logging.getLogger("sniper")
 config = oci.config.from_file()
 config["region"] = "ap-mumbai-1"
 compute_client = oci.core.ComputeClient(config)
+network_client = oci.core.VirtualNetworkClient(config)
 
 # --- STATS ---
 attempt_count = 0
@@ -90,6 +91,26 @@ def get_retry_after_seconds(error, consecutive_rate_limits):
         RATE_LIMIT_MAX_SECONDS,
     )
     return random.randint(min_seconds, max_seconds)
+
+
+def wait_for_public_ip(instance_id, timeout_seconds=600):
+    """Poll until the instance's VNIC is attached, then return its public IP."""
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        try:
+            attachments = compute_client.list_vnic_attachments(
+                compartment_id=COMPARTMENT_ID,
+                instance_id=instance_id,
+            ).data
+            for attachment in attachments:
+                if attachment.lifecycle_state == "ATTACHED" and attachment.vnic_id:
+                    vnic = network_client.get_vnic(attachment.vnic_id).data
+                    if vnic.public_ip:
+                        return vnic.public_ip
+        except Exception as e:  # never let an IP lookup failure lose us the instance
+            log.warning("Public IP lookup failed, retrying: %s", e)
+        time.sleep(10)
+    return None
 
 
 def try_launch(shape_config, consecutive_rate_limits):
@@ -149,11 +170,21 @@ def try_launch(shape_config, consecutive_rate_limits):
         log.info("After %d attempts over %s", attempt_count, str(elapsed).split(".")[0])
         log.info("=" * 60)
 
+        log.info("Waiting for the public IP to be assigned...")
+        public_ip = wait_for_public_ip(instance.id)
+        if public_ip:
+            log.info("Public IP  : %s", public_ip)
+            log.info("Login with : ssh -i <your-private-key> ubuntu@%s", public_ip)
+        else:
+            log.warning("Public IP not assigned yet - check the OCI console.")
+
         # Write success details to a file for easy reference
         with open("instance_success.txt", "w") as f:
             f.write(f"Instance ID: {instance.id}\n")
             f.write(f"Shape: {instance.shape} ({shape_config['name']})\n")
             f.write(f"Time: {datetime.now()}\n")
+            f.write(f"Public IP: {public_ip or 'pending - check OCI console'}\n")
+            f.write(f"Source: {'boot volume ' + BOOT_VOLUME_ID if BOOT_VOLUME_ID else 'image ' + IMAGE_ID}\n")
             f.write(f"Attempts: {attempt_count}\n")
 
         # If running on GitHub Actions, disable the workflow so it stops
