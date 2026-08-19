@@ -41,11 +41,16 @@ SHAPE_CONFIGS = [
 TRY_SMALLER_SHAPES = False
 
 # --- RETRY TIMING ---
-CAPACITY_RETRY_MIN_SECONDS = 30
-CAPACITY_RETRY_MAX_SECONDS = 55
-RATE_LIMIT_FIRST_MIN_SECONDS = 120
-RATE_LIMIT_FIRST_MAX_SECONDS = 240
-RATE_LIMIT_MAX_SECONDS = 900
+# Tuned from run 32226068192: at a 30-55s cadence, 45% of attempts came back
+# HTTP 429 and the resulting backoff ate 76% of the run. A slower, steadier
+# cadence stays under the throttle and yields more real attempts per hour.
+CAPACITY_RETRY_MIN_SECONDS = 75
+CAPACITY_RETRY_MAX_SECONDS = 110
+RATE_LIMIT_FIRST_MIN_SECONDS = 180
+RATE_LIMIT_FIRST_MAX_SECONDS = 300
+# Capping lower than the old 900s: long backoffs create blind spots where
+# freed capacity gets taken by someone else.
+RATE_LIMIT_MAX_SECONDS = 420
 NETWORK_RETRY_MIN_SECONDS = 30
 NETWORK_RETRY_MAX_SECONDS = 90
 
