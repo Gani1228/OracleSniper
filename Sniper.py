@@ -24,15 +24,16 @@ IMAGE_ID = os.environ.get("OCI_IMAGE_ID", "")
 SUBNET_ID = os.environ.get("OCI_SUBNET_ID", "")
 SSH_PUB_KEY = os.environ.get("OCI_SSH_PUB_KEY", "")
 
-# --- SHAPE CONFIGS TO TRY (from smallest to largest) ---
-# Strategy: smaller shapes are easier to grab, then you can resize later via OCI console
+# --- SHAPE CONFIGS TO TRY (from largest to smallest) ---
+# Oracle cut the Always Free A1 entitlement to 2 OCPUs / 12 GB total, enforced
+# from 2026-08-18. Anything above that is rejected (or auto-terminated later),
+# so 2 OCPU / 12 GB is now the full-size target.
 SHAPE_CONFIGS = [
-    {"ocpus": 4, "memory_in_gbs": 24, "name": "4 OCPU / 24 GB"},   # full config first
-    {"ocpus": 2, "memory_in_gbs": 12, "name": "2 OCPU / 12 GB"},   # fallback: half size
-    {"ocpus": 1, "memory_in_gbs": 6,  "name": "1 OCPU / 6 GB"},    # fallback: minimum
+    {"ocpus": 2, "memory_in_gbs": 12, "name": "2 OCPU / 12 GB"},   # full free-tier allowance
+    {"ocpus": 1, "memory_in_gbs": 6,  "name": "1 OCPU / 6 GB"},    # fallback: half size
 ]
 
-# Set to True to try smaller shapes if 4/24 keeps failing
+# Set to True to try smaller shapes if 2/12 keeps failing
 TRY_SMALLER_SHAPES = False
 
 # --- RETRY TIMING ---
@@ -111,7 +112,7 @@ def try_launch(shape_config, consecutive_rate_limits):
             shape_config=shape_specs,
             image_id=IMAGE_ID,
             create_vnic_details=vnic_specs,
-            display_name="AI_Brain_24GB",
+            display_name="AI_Brain_12GB",
             metadata={"ssh_authorized_keys": SSH_PUB_KEY},
         )
 
@@ -184,7 +185,7 @@ def try_launch(shape_config, consecutive_rate_limits):
             return True, None, consecutive_rate_limits
 
         elif e.status == 400 and "LimitExceeded" in str(e):
-            log.error("Limit exceeded - you may already have an A1 instance running.")
+            log.error("Limit exceeded - free tier is 2 OCPU / 12 GB total; you likely already have an A1 instance using it.")
             log.error("Details: %s", e.message)
             return True, None, consecutive_rate_limits
 
@@ -217,7 +218,7 @@ def run_sniper():
             config_index = min((capacity_failures - 50) // 20, len(SHAPE_CONFIGS) - 1)
             shape = SHAPE_CONFIGS[config_index]
         else:
-            shape = SHAPE_CONFIGS[0]  # Always try full 4/24 first
+            shape = SHAPE_CONFIGS[0]  # Always try full 2/12 first
 
         finished, retry_delay, consecutive_rate_limits = try_launch(shape, consecutive_rate_limits)
 
