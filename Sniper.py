@@ -38,14 +38,28 @@ SHAPE_CONFIGS = [
 ]
 
 # Set to True to try smaller shapes if 2/12 keeps failing
-TRY_SMALLER_SHAPES = False
+TRY_SMALLER_SHAPES = True
+
+# After this many capacity failures on the full size, start interleaving the
+# smaller shapes. Capacity windows last seconds, so once we know 2/12 is scarce
+# it is better to alternate full/half every other attempt than to give up on
+# either one - a 1 OCPU foothold in the region beats nothing.
+SMALLER_SHAPE_AFTER = 20
+
+# --- FAULT DOMAIN ROTATION ---
+# Mumbai is a single-AD region, but each AD has 3 fault domains and A1 capacity
+# is often stranded in just one of them. Leaving fault_domain unset lets Oracle
+# choose; rotating explicitly also probes FDs its placement logic skips. None
+# keeps the original "let Oracle pick" behaviour in the rotation.
+ROTATE_FAULT_DOMAINS = True
+FAULT_DOMAINS = [None, "FAULT-DOMAIN-1", "FAULT-DOMAIN-2", "FAULT-DOMAIN-3"]
 
 # --- RETRY TIMING ---
 # Tuned from run 32226068192: at a 30-55s cadence, 45% of attempts came back
 # HTTP 429 and the resulting backoff ate 76% of the run. A slower, steadier
 # cadence stays under the throttle and yields more real attempts per hour.
-CAPACITY_RETRY_MIN_SECONDS = 75
-CAPACITY_RETRY_MAX_SECONDS = 110
+CAPACITY_RETRY_MIN_SECONDS = 90
+CAPACITY_RETRY_MAX_SECONDS = 140
 RATE_LIMIT_FIRST_MIN_SECONDS = 180
 RATE_LIMIT_FIRST_MAX_SECONDS = 300
 # Capping lower than the old 900s: long backoffs create blind spots where
@@ -118,7 +132,7 @@ def wait_for_public_ip(instance_id, timeout_seconds=600):
     return None
 
 
-def try_launch(shape_config, consecutive_rate_limits):
+def try_launch(shape_config, consecutive_rate_limits, fault_domain=None):
     """Attempt to launch an instance with the given shape config."""
     global attempt_count
     attempt_count += 1
@@ -155,11 +169,15 @@ def try_launch(shape_config, consecutive_rate_limits):
             metadata={"ssh_authorized_keys": SSH_PUB_KEY},
         )
 
+        if fault_domain:
+            request.fault_domain = fault_domain
+
         elapsed = datetime.now() - start_time
         log.info(
-            "Attempt #%d [%s] | Running for %s | Trying %s ...",
+            "Attempt #%d [%s/%s] | Running for %s | Trying %s ...",
             attempt_count,
             AD_NAME.split(":")[-1],
+            fault_domain.replace("FAULT-DOMAIN-", "FD") if fault_domain else "FD-any",
             str(elapsed).split(".")[0],
             shape_config["name"],
         )
@@ -259,30 +277,38 @@ def run_sniper():
         log.info("Source: existing boot volume %s", BOOT_VOLUME_ID)
     else:
         log.info("Source: image %s", IMAGE_ID)
-    log.info("Retry interval: %d-%ds | Smaller shape fallback: %s",
+    log.info("Retry interval: %d-%ds | Smaller shape fallback: %s | FD rotation: %s",
              CAPACITY_RETRY_MIN_SECONDS, CAPACITY_RETRY_MAX_SECONDS,
-             "ON" if TRY_SMALLER_SHAPES else "OFF")
+             ("ON (after %d capacity failures)" % SMALLER_SHAPE_AFTER)
+             if TRY_SMALLER_SHAPES else "OFF",
+             "ON" if ROTATE_FAULT_DOMAINS else "OFF")
     log.info("-" * 60)
 
     while True:
-        # Pick which shape config to try
-        if TRY_SMALLER_SHAPES and capacity_failures >= 50:
-            # After 50 failures on full size, cycle through smaller shapes
-            config_index = min((capacity_failures - 50) // 20, len(SHAPE_CONFIGS) - 1)
-            shape = SHAPE_CONFIGS[config_index]
+        # Pick which shape config to try. Once the full size has proven scarce,
+        # alternate full/half so neither is starved - both windows are brief.
+        if TRY_SMALLER_SHAPES and capacity_failures >= SMALLER_SHAPE_AFTER:
+            shape = SHAPE_CONFIGS[attempt_count % len(SHAPE_CONFIGS)]
         else:
             shape = SHAPE_CONFIGS[0]  # Always try full 2/12 first
 
-        finished, retry_delay, consecutive_rate_limits = try_launch(shape, consecutive_rate_limits)
+        # Rotate fault domains so stranded capacity in one FD still gets probed.
+        if ROTATE_FAULT_DOMAINS:
+            fault_domain = FAULT_DOMAINS[attempt_count % len(FAULT_DOMAINS)]
+        else:
+            fault_domain = None
+
+        finished, retry_delay, consecutive_rate_limits = try_launch(
+            shape, consecutive_rate_limits, fault_domain
+        )
 
         if finished:
             break
 
-        # Track consecutive capacity failures
+        # Track capacity failures. A 429 says nothing about capacity, so it must
+        # not reset the counter - doing so kept the fallback from ever engaging.
         if consecutive_rate_limits == 0:
             capacity_failures += 1
-        else:
-            capacity_failures = 0  # Reset on rate limit (different issue)
 
         time.sleep(retry_delay)
 
