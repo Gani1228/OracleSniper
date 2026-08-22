@@ -13,6 +13,7 @@ jobs:
     permissions:
       contents: read   # required to check out this private repo
       actions: write   # lets the sniper disable this workflow after a successful launch
+      issues: write    # lets the run open a notification issue when it wins
     timeout-minutes: 350  # ~5h 50m (GitHub max is 6h)
 
     steps:
@@ -59,6 +60,30 @@ jobs:
           timeout 20400 python Sniper.py || true
         # timeout = 5h 40m in seconds (340 * 60)
         # `|| true` so the workflow doesn't fail when timeout kills it
+
+      # Sniper.py writes instance_success.txt only after a real launch, so its
+      # presence is the win signal. An assigned issue is the cheapest reliable
+      # push: assignment always notifies, regardless of watch settings.
+      - name: Notify on successful launch
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ ! -f instance_success.txt ]; then
+            echo "No instance_success.txt - still hunting, no notification sent"
+            exit 0
+          fi
+          echo "Instance acquired - opening notification issue"
+          {
+            echo "The sniper launched an instance."
+            echo
+            cat instance_success.txt
+            echo
+            echo "Workflow run: $RUN_URL"
+          } > issue_body.md
+          gh issue create --title "Oracle A1 instance acquired" --assignee "$OWNER" --body-file issue_body.md
 
       - name: Upload log artifact
         if: always()
