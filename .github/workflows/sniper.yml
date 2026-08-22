@@ -1,6 +1,10 @@
 name: Oracle ARM Sniper
 
 on:
+  schedule:
+    # Runs are capped at ~5h40m, so every 6h gives near-continuous cover
+    # without depending on any local machine staying awake.
+    - cron: "0 */6 * * *"
   workflow_dispatch:
 
 jobs:
