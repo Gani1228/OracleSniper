@@ -5,3 +5,6 @@ __pycache__/
 Sniper_old.py
 sniper.log
 instance_success.txt
+supervisor.log
+sniper.pid
+Sniper.py.bak
