@@ -2,11 +2,11 @@ name: Oracle ARM Sniper
 
 on:
   schedule:
-    # Once a day. Every 6h burned the 2000-minute free tier in ~1.5 days
-    # (6 runs x 341 min) and then every run failed instantly on the billing
-    # block. Daily costs ~341 min/day, leaving the local sniper as primary
-    # cover and this as a backup for when the PC is off.
-    - cron: "0 0 * * *"
+    # Every 6h. The old 2000-minute cap that forced this down to daily no
+    # longer applies: the repo is public now, so Actions minutes are free and
+    # unmetered. 4 runs x 5h40m gives ~22.7h/day of cloud cover, which matters
+    # because the local sniper only runs while the PC is awake.
+    - cron: "0 */6 * * *"
   workflow_dispatch:
 
 jobs:

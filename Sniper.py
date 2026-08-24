@@ -44,7 +44,13 @@ TRY_SMALLER_SHAPES = True
 # smaller shapes. Capacity windows last seconds, so once we know 2/12 is scarce
 # it is better to alternate full/half every other attempt than to give up on
 # either one - a 1 OCPU foothold in the region beats nothing.
-SMALLER_SHAPE_AFTER = 20
+#
+# Was 20, which in practice meant the fallback never fired: capacity_failures
+# resets to 0 on every process start, and local runs are cut short whenever the
+# PC sleeps. Across 241 logged attempts, every single one asked for 2/12 and the
+# half-size shape was never tried once. 6 is reached inside ~10 minutes, so the
+# fallback now actually engages in a short run.
+SMALLER_SHAPE_AFTER = 6
 
 # --- FAULT DOMAIN ROTATION ---
 # Mumbai is a single-AD region, but each AD has 3 fault domains and A1 capacity
