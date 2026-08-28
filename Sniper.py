@@ -32,9 +32,22 @@ SSH_PUB_KEY = os.environ.get("OCI_SSH_PUB_KEY", "")
 # Oracle cut the Always Free A1 entitlement to 2 OCPUs / 12 GB total, enforced
 # from 2026-08-18. Anything above that is rejected (or auto-terminated later),
 # so 2 OCPU / 12 GB is now the full-size target.
+# Rungs from the full allowance down to the smallest instance Oracle sells.
+# list_shapes reports VM.Standard.A1.Flex as ocpu 1-80 / mem 1-512 GB with a
+# 1 GB-per-OCPU floor, so 1 OCPU / 1 GB is the real minimum - the old 1/6 floor
+# left the four smallest configurations untried across every run to date. A
+# host with fragmented memory can place a 1 GB VM when it cannot fit 6 GB, so
+# the small rungs are extra surface area rather than wasted attempts.
+# Memory does not constrain disk: every rung here boots the existing 47 GB
+# boot volume, since A1.Flex allows boot volumes far larger regardless of RAM.
+# Five rungs is deliberate - coprime with the four fault domains below, so
+# shape and FD cannot stay locked to each other across attempts.
 SHAPE_CONFIGS = [
-    {"ocpus": 2, "memory_in_gbs": 12, "name": "2 OCPU / 12 GB"},   # full free-tier allowance
-    {"ocpus": 1, "memory_in_gbs": 6,  "name": "1 OCPU / 6 GB"},    # fallback: half size
+    {"ocpus": 2, "memory_in_gbs": 12, "name": "2 OCPU / 12 GB"},  # full free-tier allowance
+    {"ocpus": 1, "memory_in_gbs": 6,  "name": "1 OCPU / 6 GB"},   # half size
+    {"ocpus": 1, "memory_in_gbs": 4,  "name": "1 OCPU / 4 GB"},
+    {"ocpus": 1, "memory_in_gbs": 2,  "name": "1 OCPU / 2 GB"},
+    {"ocpus": 1, "memory_in_gbs": 1,  "name": "1 OCPU / 1 GB"},   # smallest A1 that exists
 ]
 
 # Set to True to try smaller shapes if 2/12 keeps failing
@@ -299,8 +312,11 @@ def run_sniper():
             shape = SHAPE_CONFIGS[0]  # Always try full 2/12 first
 
         # Rotate fault domains so stranded capacity in one FD still gets probed.
+        # Chosen at random rather than round-robin: the shape index above is
+        # also derived from attempt_count, and any common factor between the
+        # two list lengths would pin each shape to one FD forever.
         if ROTATE_FAULT_DOMAINS:
-            fault_domain = FAULT_DOMAINS[attempt_count % len(FAULT_DOMAINS)]
+            fault_domain = random.choice(FAULT_DOMAINS)
         else:
             fault_domain = None
 
