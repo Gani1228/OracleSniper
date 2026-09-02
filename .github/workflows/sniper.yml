@@ -2,11 +2,28 @@ name: Oracle ARM Sniper
 
 on:
   schedule:
-    # Every 6h. The old 2000-minute cap that forced this down to daily no
-    # longer applies: the repo is public now, so Actions minutes are free and
-    # unmetered. 4 runs x 5h40m gives ~22.7h/day of cloud cover, which matters
-    # because the local sniper only runs while the PC is awake.
-    - cron: "0 */6 * * *"
+    # Every 3h. Actions minutes are free and unmetered on this public repo, so
+    # cadence costs nothing; coverage is the only thing that matters, because
+    # the local sniper only runs while the PC is awake.
+    #
+    # Was every 6h, which on paper gave 4 x 5h40m = 22.7h/day. Measured against
+    # the actual run history for 2026-08-25..09-02 it delivered 18.2h/day:
+    # 49.6h dark across 19 holes, the worst 8.0h long. Two causes compound.
+    # A 6h cron against a 5h40m run leaves 20 min uncovered by design, and
+    # GitHub defers scheduled runs on public repos under load - the deferral
+    # here grew from +0.5h in late August to +4.9h on the 2026-09-02 run. Once
+    # the deferral approaches the 5h40m runtime, the next run starts only after
+    # the previous one has already died, which is where the multi-hour holes
+    # came from.
+    #
+    # At 3h the schedule tolerates a deferral of nearly 5h40m before a hole can
+    # open at all, so the runs overlap instead of leaving gaps. Overlap is the
+    # point, not a side effect: A1 capacity windows last seconds, so two
+    # snipers probing is strictly better than none. The cost is that concurrent
+    # snipers share one tenancy's API budget and push each other into HTTP 429
+    # more often (13% of attempts were rate limited at the old cadence); the
+    # per-process backoff in Sniper.py absorbs that.
+    - cron: "0 */3 * * *"
   workflow_dispatch:
 
 jobs:
